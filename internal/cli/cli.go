@@ -7,10 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"time"
 
 	"github.com/ernilambar/uplet/internal/checker"
+	"github.com/ernilambar/uplet/internal/server"
 )
 
 // version is the build version, overridable at release time via
@@ -56,8 +58,7 @@ func Run(args []string) int {
 	case "check":
 		return runCheck(args[1:], os.Stdout, os.Stderr)
 	case "serve":
-		fmt.Fprintln(os.Stderr, "serve: not implemented yet")
-		return exitUnknown
+		return runServe(args[1:], os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", args[0], usage)
 		return exitUnknown
@@ -95,6 +96,26 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	}
 
 	return code
+}
+
+func runServe(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	port := fs.Int("port", server.DefaultPort, "port to listen on (binds to 127.0.0.1 only)")
+
+	if err := fs.Parse(args); err != nil {
+		return exitUnknown
+	}
+
+	srv := server.New()
+	srv.Port = *port
+	srv.Logger = log.New(stderr, "", log.LstdFlags)
+
+	if err := srv.Run(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "serve: %v\n", err)
+		return exitCritical
+	}
+	return exitOK
 }
 
 func exitCodeFor(res checker.Result) int {
