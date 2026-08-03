@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ernilambar/uplet/internal/checker"
@@ -65,13 +66,53 @@ func Run(args []string) int {
 	}
 }
 
+// reorderFlags moves flag tokens ahead of positional arguments, since
+// flag.FlagSet.Parse stops parsing flags at the first non-flag argument and
+// would otherwise reject "check <url> --json" (flags after the URL).
+func reorderFlags(fs *flag.FlagSet, args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if arg == "-" || len(arg) == 0 || arg[0] != '-' {
+			positional = append(positional, arg)
+			continue
+		}
+
+		flags = append(flags, arg)
+		if strings.Contains(arg, "=") {
+			continue
+		}
+
+		name := strings.TrimLeft(arg, "-")
+		if name == "h" || name == "help" {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			continue
+		}
+		if bv, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bv.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return append(flags, positional...)
+}
+
 func runCheck(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "output the result as JSON")
 	timeout := fs.Duration("timeout", 10*time.Second, "per-check timeout")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlags(fs, args)); err != nil {
 		return exitUnknown
 	}
 
