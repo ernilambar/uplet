@@ -2,8 +2,15 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"os"
+	"time"
+
+	"github.com/ernilambar/uplet/internal/checker"
 )
 
 // version is the build version, overridable at release time via
@@ -25,28 +32,105 @@ Exit codes (check):
   3  UNKNOWN     bad format or indeterminate (timeout)
 `
 
+const (
+	exitOK       = 0
+	exitWarning  = 1
+	exitCritical = 2
+	exitUnknown  = 3
+)
+
 // Run dispatches args to a subcommand and returns the process exit code.
 func Run(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
-		return 3
+		return exitUnknown
 	}
 
 	switch args[0] {
 	case "--help", "-h", "help":
 		fmt.Fprint(os.Stdout, usage)
-		return 0
+		return exitOK
 	case "--version", "-v", "version":
 		fmt.Fprintln(os.Stdout, version)
-		return 0
+		return exitOK
 	case "check":
-		fmt.Fprintln(os.Stderr, "check: not implemented yet")
-		return 3
+		return runCheck(args[1:], os.Stdout, os.Stderr)
 	case "serve":
 		fmt.Fprintln(os.Stderr, "serve: not implemented yet")
-		return 3
+		return exitUnknown
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", args[0], usage)
-		return 3
+		return exitUnknown
+	}
+}
+
+func runCheck(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "output the result as JSON")
+	timeout := fs.Duration("timeout", 10*time.Second, "per-check timeout")
+
+	if err := fs.Parse(args); err != nil {
+		return exitUnknown
+	}
+
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintf(stderr, "check: expected exactly one URL\n\n%s", usage)
+		return exitUnknown
+	}
+	rawURL := rest[0]
+
+	c := checker.New()
+	c.Timeout = *timeout
+	res := c.Check(context.Background(), rawURL)
+	code := exitCodeFor(res)
+
+	if *jsonOut {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(res)
+	} else {
+		printHuman(stdout, res, code)
+	}
+
+	return code
+}
+
+func exitCodeFor(res checker.Result) int {
+	switch res.ReasonCode {
+	case string(checker.ReasonOK), string(checker.ReasonTooLarge):
+		return exitOK
+	case string(checker.ReasonNotFound), string(checker.ReasonRedirectNotFound), string(checker.ReasonClientError):
+		return exitWarning
+	case string(checker.ReasonInvalidFormat), string(checker.ReasonTimeout):
+		return exitUnknown
+	default: // network_error, dns_error, tls_error, blocked_target, server_error
+		return exitCritical
+	}
+}
+
+func exitLabel(code int) string {
+	switch code {
+	case exitOK:
+		return "OK"
+	case exitWarning:
+		return "WARNING"
+	case exitCritical:
+		return "CRITICAL"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func printHuman(w io.Writer, res checker.Result, code int) {
+	fmt.Fprintf(w, "%s  %s\n", exitLabel(code), res.URL)
+	if res.StatusCode != 0 {
+		fmt.Fprintf(w, "  status_code:    %d\n", res.StatusCode)
+	}
+	fmt.Fprintf(w, "  response_time:  %dms\n", res.ResponseTimeMs)
+	fmt.Fprintf(w, "  reason:         %s (%s)\n", res.Reason, res.ReasonCode)
+	if res.RedirectedTo != "" {
+		fmt.Fprintf(w, "  redirected_to:  %s\n", res.RedirectedTo)
 	}
 }
