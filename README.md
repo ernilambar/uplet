@@ -1,13 +1,30 @@
 # uplet
 
-Checks if a URL is up and if the page actually exists (not just a soft
-404). Available as a CLI or a local HTTP server.
+CLI tool to check that a URL is up and the page really exists.
+
+## Features
+
+- **Catches fake "page found" responses.** Some sites return success for
+  a page that doesn't exist. uplet reports it as missing anyway.
+- **Clear results.** Plain text for reading, `--json` for scripts, and
+  exit codes that work with monitoring tools as-is.
+- **One file, nothing to set up.** A single binary with no dependencies
+  and no config.
 
 ## Requirements
 
 - macOS (arm64 or amd64).
 
 ## Install
+
+### Homebrew (macOS):
+
+```sh
+brew tap ernilambar/tap
+brew trust ernilambar/tap
+brew install ernilambar/tap/uplet
+uplet --version
+```
 
 ### From a release
 
@@ -60,6 +77,12 @@ Exit codes (standard monitoring-plugin convention):
 ```
 uplet serve [--port <port>]   # default 54321, binds to 127.0.0.1 only
 ```
+
+The server has no authentication. It binds to `127.0.0.1`, so by default
+only your own machine can reach it — that loopback bind is the only
+access control. Do not put it behind a reverse proxy, forward the port,
+or bind it to a public interface: anyone who can reach it can make uplet
+send outbound HTTP requests on your behalf.
 
 ```console
 $ curl -X POST 127.0.0.1:54321/v1/check \
