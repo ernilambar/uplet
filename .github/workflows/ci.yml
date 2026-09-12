@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +41,7 @@ jobs:
         run: go vet ./...
 
       - name: Run tests
-        run: go test ./...
+        run: go test -race -cover ./...
 
       - name: Build binary (smoke test)
         run: go build -trimpath -ldflags="-s -w" -o uplet ./cmd/uplet

@@ -22,19 +22,24 @@ func newAllowLoopbackChecker() *Checker {
 }
 
 func TestCheck_InvalidFormat(t *testing.T) {
-	c := newAllowLoopbackChecker()
-	for _, u := range []string{"not a url", "ftp://example.com", "http://", "example.com"} {
-		res := c.Check(context.Background(), u)
-		if res.ValidFormat {
-			t.Errorf("Check(%q).ValidFormat = true, want false", u)
-		}
-		if res.ReasonCode != string(ReasonInvalidFormat) {
-			t.Errorf("Check(%q).ReasonCode = %q, want %q", u, res.ReasonCode, ReasonInvalidFormat)
-		}
+	t.Parallel()
+	for _, u := range []string{"not a url", "ftp://example.com", "http://", "example.com", ""} {
+		t.Run(u, func(t *testing.T) {
+			t.Parallel()
+			c := newAllowLoopbackChecker()
+			res := c.Check(context.Background(), u)
+			if res.ValidFormat {
+				t.Errorf("Check(%q).ValidFormat = true, want false", u)
+			}
+			if res.ReasonCode != string(ReasonInvalidFormat) {
+				t.Errorf("Check(%q).ReasonCode = %q, want %q", u, res.ReasonCode, ReasonInvalidFormat)
+			}
+		})
 	}
 }
 
 func TestCheck_200(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -47,6 +52,7 @@ func TestCheck_200(t *testing.T) {
 }
 
 func TestCheck_404(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -59,6 +65,7 @@ func TestCheck_404(t *testing.T) {
 }
 
 func TestCheck_500(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -71,6 +78,7 @@ func TestCheck_500(t *testing.T) {
 }
 
 func TestCheck_HeadNotAllowedFallsBackToGet(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -91,6 +99,7 @@ func TestCheck_HeadNotAllowedFallsBackToGet(t *testing.T) {
 }
 
 func TestCheck_TransparentTrailingSlashRedirect(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/foo" {
 			http.Redirect(w, r, "/foo/", http.StatusMovedPermanently)
@@ -107,6 +116,7 @@ func TestCheck_TransparentTrailingSlashRedirect(t *testing.T) {
 }
 
 func TestCheck_SoftNotFoundRedirectToRoot(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/missing-page" {
 			http.Redirect(w, r, "/", http.StatusFound)
@@ -126,6 +136,7 @@ func TestCheck_SoftNotFoundRedirectToRoot(t *testing.T) {
 }
 
 func TestCheck_ContentBasedSoftNotFound(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("<html><body>404 - Page Not Found</body></html>"))
@@ -139,6 +150,7 @@ func TestCheck_ContentBasedSoftNotFound(t *testing.T) {
 }
 
 func TestCheck_FlakyThenSuccess(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -158,6 +170,7 @@ func TestCheck_FlakyThenSuccess(t *testing.T) {
 }
 
 func TestCheck_ExhaustedRetries(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -175,6 +188,7 @@ func TestCheck_ExhaustedRetries(t *testing.T) {
 }
 
 func TestCheck_DNSNotFound(t *testing.T) {
+	t.Parallel()
 	c := newAllowLoopbackChecker()
 	c.resolver = &fakeResolver{err: &net.DNSError{IsNotFound: true, Name: "nope.invalid"}}
 
@@ -185,6 +199,7 @@ func TestCheck_DNSNotFound(t *testing.T) {
 }
 
 func TestCheck_DNSTimeout(t *testing.T) {
+	t.Parallel()
 	c := newAllowLoopbackChecker()
 	c.resolver = &fakeResolver{err: &net.DNSError{IsTimeout: true, Name: "slow.invalid"}}
 
@@ -195,9 +210,12 @@ func TestCheck_DNSTimeout(t *testing.T) {
 }
 
 func TestCheck_Timeout(t *testing.T) {
+	t.Parallel()
+	// The handler blocks until the request context is canceled, so the
+	// test depends on the client timeout firing rather than racing a
+	// fixed sleep against a fixed deadline.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(300 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		<-r.Context().Done()
 	}))
 	defer ts.Close()
 
@@ -209,7 +227,65 @@ func TestCheck_Timeout(t *testing.T) {
 	}
 }
 
+func TestCheck_ClientError(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+
+	res := newAllowLoopbackChecker().Check(context.Background(), ts.URL)
+	if res.ReasonCode != string(ReasonClientError) {
+		t.Fatalf("ReasonCode = %q, want %q", res.ReasonCode, ReasonClientError)
+	}
+	if !res.SiteUp || res.PageExists {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestCheck_NetworkError(t *testing.T) {
+	t.Parallel()
+	// Start then immediately close a server so the address is refused.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := ts.URL
+	ts.Close()
+
+	res := newAllowLoopbackChecker().Check(context.Background(), deadURL)
+	if res.ReasonCode != string(ReasonNetworkError) {
+		t.Fatalf("ReasonCode = %q, want %q (result %+v)", res.ReasonCode, ReasonNetworkError, res)
+	}
+	if res.SiteUp {
+		t.Fatalf("SiteUp = true, want false; result %+v", res)
+	}
+	// A refused connection is definitive, so it must not be retried.
+	if res.Attempts != 1 {
+		t.Fatalf("Attempts = %d, want 1 (connection refused is not transient)", res.Attempts)
+	}
+}
+
+func TestCheck_MaxRedirects(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/loop", http.StatusFound)
+	}))
+	defer ts.Close()
+
+	c := newAllowLoopbackChecker()
+	c.MaxRedirects = 2
+	res := c.Check(context.Background(), ts.URL)
+	if res.ReasonCode != string(ReasonNetworkError) {
+		t.Fatalf("ReasonCode = %q, want %q (result %+v)", res.ReasonCode, ReasonNetworkError, res)
+	}
+	if !strings.Contains(res.Reason, "stopped after 2 redirects") {
+		t.Fatalf("Reason = %q, want it to mention the redirect limit", res.Reason)
+	}
+}
+
 func TestCheck_TooLarge(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(strings.Repeat("a", 200)))
@@ -225,6 +301,7 @@ func TestCheck_TooLarge(t *testing.T) {
 }
 
 func TestCheck_TLSError(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -239,33 +316,44 @@ func TestCheck_TLSError(t *testing.T) {
 // SSRF tests below use the real production blocklist.
 
 func TestIsBlockedIP(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
+		name string
 		ip   string
 		want bool
 	}{
-		{"127.0.0.1", true},
-		{"::1", true},
-		{"10.1.2.3", true},
-		{"172.16.5.9", true},
-		{"192.168.1.1", true},
-		{"169.254.169.254", true}, // cloud metadata
-		{"fe80::1", true},
-		{"fd00:ec2::254", true}, // IPv6 metadata
-		{"0.0.0.0", true},
-		{"255.255.255.255", true},
-		{"::ffff:127.0.0.1", true}, // IPv4-mapped loopback
-		{"8.8.8.8", false},
-		{"93.184.216.34", false},
+		{"ipv4 loopback", "127.0.0.1", true},
+		{"ipv6 loopback", "::1", true},
+		{"rfc1918 10/8", "10.1.2.3", true},
+		{"rfc1918 172.16/12", "172.16.5.9", true},
+		{"rfc1918 192.168/16", "192.168.1.1", true},
+		{"cloud metadata", "169.254.169.254", true},
+		{"ipv6 link-local", "fe80::1", true},
+		{"ipv6 metadata", "fd00:ec2::254", true},
+		{"unspecified", "0.0.0.0", true},
+		{"broadcast", "255.255.255.255", true},
+		{"ipv4-mapped loopback", "::ffff:127.0.0.1", true},
+		{"public dns", "8.8.8.8", false},
+		{"public web", "93.184.216.34", false},
 	}
 	for _, c := range cases {
-		ip := net.ParseIP(c.ip)
-		if got := isBlockedIP(ip); got != c.want {
-			t.Errorf("isBlockedIP(%s) = %v, want %v", c.ip, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ip := net.ParseIP(c.ip)
+			if got := isBlockedIP(ip); got != c.want {
+				t.Errorf("isBlockedIP(%s) = %v, want %v", c.ip, got, c.want)
+			}
+		})
+	}
+
+	// A nil IP must not panic and must not be treated as blocked.
+	if isBlockedIP(nil) {
+		t.Error("isBlockedIP(nil) = true, want false")
 	}
 }
 
 func TestCheck_RedirectToPrivateIPBlocked(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
 	}))
@@ -286,6 +374,7 @@ func TestCheck_RedirectToPrivateIPBlocked(t *testing.T) {
 }
 
 func TestSafeDialContext_MixedResolutionRejected(t *testing.T) {
+	t.Parallel()
 	fr := &fakeResolver{ips: [][]net.IPAddr{
 		{{IP: net.ParseIP("203.0.113.10")}, {IP: net.ParseIP("10.0.0.5")}},
 	}}
@@ -301,6 +390,7 @@ func TestSafeDialContext_MixedResolutionRejected(t *testing.T) {
 }
 
 func TestSafeDialContext_ResolvesOnceAndDialsValidatedIP(t *testing.T) {
+	t.Parallel()
 	fr := &fakeResolver{ips: [][]net.IPAddr{{{IP: net.ParseIP("203.0.113.10")}}}}
 	var gotAddr string
 	fakeDial := func(ctx context.Context, network, addr string) (net.Conn, error) {
