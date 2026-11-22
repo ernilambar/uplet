@@ -162,7 +162,7 @@ func (c *Checker) newClient() *http.Client {
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= c.MaxRedirects {
-				return fmt.Errorf("stopped after %d redirects", c.MaxRedirects)
+				return fmt.Errorf("%w: stopped after %d redirects", errTooManyRedirects, c.MaxRedirects)
 			}
 			return c.validateRedirectTarget(req.Context(), req.URL)
 		},
@@ -202,6 +202,9 @@ func (c *Checker) fillError(res *Result, err error) {
 	case errors.Is(err, errBlockedTarget):
 		res.ReasonCode = string(ReasonBlockedTarget)
 		res.Reason = "target address is blocked by SSRF policy"
+	case errors.Is(err, errTooManyRedirects):
+		res.ReasonCode = string(ReasonTooManyRedirects)
+		res.Reason = err.Error()
 	case isDNSTimeout(err):
 		res.ReasonCode = string(ReasonTimeout)
 		res.Reason = "DNS resolution timed out"
@@ -238,6 +241,8 @@ func (c *Checker) fillFromResponse(res *Result, original *url.URL, resp *http.Re
 		exists, tooLarge, err := c.checkSoft404(resp)
 		if err != nil {
 			c.fillError(res, err)
+			// Headers arrived, so the site answered; only the body failed.
+			res.SiteUp = true
 			return
 		}
 		switch {

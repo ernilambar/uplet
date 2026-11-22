@@ -48,6 +48,26 @@ func TestRunCheck_InvalidTimeoutFlag(t *testing.T) {
 	}
 }
 
+func TestRunCheck_NonPositiveTimeout(t *testing.T) {
+	t.Parallel()
+	for _, v := range []string{"0", "0s", "-1s"} {
+		t.Run(v, func(t *testing.T) {
+			t.Parallel()
+			var out, errOut bytes.Buffer
+			code := runCheck([]string{"--timeout", v, "http://example.com"}, &out, &errOut)
+			if code != exitUnknown {
+				t.Fatalf("exit code = %d, want %d", code, exitUnknown)
+			}
+			if !strings.Contains(errOut.String(), "--timeout must be positive") {
+				t.Fatalf("stderr = %q, want the validation message", errOut.String())
+			}
+			if out.Len() != 0 {
+				t.Fatalf("stdout = %q, want no check output", out.String())
+			}
+		})
+	}
+}
+
 func TestRunCheck_JSONOutput(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
@@ -161,6 +181,7 @@ func TestExitCodeFor(t *testing.T) {
 		{checker.ReasonDNSError, exitCritical},
 		{checker.ReasonBlockedTarget, exitCritical},
 		{checker.ReasonTLSError, exitCritical},
+		{checker.ReasonTooManyRedirects, exitCritical},
 	}
 	for _, c := range cases {
 		t.Run(string(c.code), func(t *testing.T) {

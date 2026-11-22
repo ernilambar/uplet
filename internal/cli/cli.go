@@ -115,6 +115,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(reorderFlags(fs, args)); err != nil {
 		return exitUnknown
 	}
+	if *timeout <= 0 {
+		fmt.Fprintln(stderr, "check: --timeout must be positive")
+		return exitUnknown
+	}
 
 	rest := fs.Args()
 	if len(rest) != 1 {
@@ -167,7 +171,7 @@ func exitCodeFor(res checker.Result) int {
 		return exitWarning
 	case string(checker.ReasonInvalidFormat), string(checker.ReasonTimeout):
 		return exitUnknown
-	default: // network_error, dns_error, tls_error, blocked_target, server_error
+	default: // network_error, dns_error, tls_error, blocked_target, server_error, too_many_redirects
 		return exitCritical
 	}
 }

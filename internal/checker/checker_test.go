@@ -333,11 +333,38 @@ func TestCheck_MaxRedirects(t *testing.T) {
 	c := newAllowLoopbackChecker()
 	c.MaxRedirects = 2
 	res := c.Check(context.Background(), ts.URL)
-	if res.ReasonCode != string(ReasonNetworkError) {
-		t.Fatalf("ReasonCode = %q, want %q (result %+v)", res.ReasonCode, ReasonNetworkError, res)
+	if res.ReasonCode != string(ReasonTooManyRedirects) {
+		t.Fatalf("ReasonCode = %q, want %q (result %+v)", res.ReasonCode, ReasonTooManyRedirects, res)
 	}
 	if !strings.Contains(res.Reason, "stopped after 2 redirects") {
 		t.Fatalf("Reason = %q, want it to mention the redirect limit", res.Reason)
+	}
+	if res.Attempts != 1 {
+		t.Fatalf("Attempts = %d, want 1 (a redirect loop is not transient)", res.Attempts)
+	}
+}
+
+// Headers arrived but the body stalled: the site answered, so it's up.
+func TestCheck_BodyReadTimeoutKeepsSiteUp(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodHead {
+			return
+		}
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	}))
+	defer ts.Close()
+
+	c := newAllowLoopbackChecker()
+	c.Timeout = 200 * time.Millisecond
+	res := c.Check(context.Background(), ts.URL)
+	if res.ReasonCode != string(ReasonTimeout) || !res.SiteUp || res.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected result: %+v", res)
 	}
 }
 
@@ -519,6 +546,54 @@ func TestSafeDialContext_ResolvesOnceAndDialsValidatedIP(t *testing.T) {
 	}
 	if gotAddr != "93.184.216.34:443" {
 		t.Fatalf("dialed %q, want the validated resolved IP", gotAddr)
+	}
+}
+
+func TestSafeDialContext_FallsBackToNextAddress(t *testing.T) {
+	t.Parallel()
+	fr := &fakeResolver{ips: [][]net.IPAddr{{
+		{IP: net.ParseIP("2606:4700:4700::1111")},
+		{IP: net.ParseIP("93.184.216.34")},
+	}}}
+	var tried []string
+	want, peer := net.Pipe()
+	defer want.Close()
+	defer peer.Close()
+	dial := newSafeDialContext(fr, isBlockedIP, func(ctx context.Context, network, addr string) (net.Conn, error) {
+		tried = append(tried, addr)
+		if strings.HasPrefix(addr, "[") {
+			return nil, errors.New("network is unreachable")
+		}
+		return want, nil
+	})
+
+	conn, err := dial(context.Background(), "tcp", "example.com:443")
+	if err != nil || conn != want {
+		t.Fatalf("dial = (%v, %v), want the second address's conn", conn, err)
+	}
+	if len(tried) != 2 || tried[0] != "[2606:4700:4700::1111]:443" || tried[1] != "93.184.216.34:443" {
+		t.Fatalf("tried %v, want both addresses in resolver order", tried)
+	}
+}
+
+func TestSafeDialContext_AllAddressesFailReturnsFirstError(t *testing.T) {
+	t.Parallel()
+	fr := &fakeResolver{ips: [][]net.IPAddr{{
+		{IP: net.ParseIP("2606:4700:4700::1111")},
+		{IP: net.ParseIP("93.184.216.34")},
+	}}}
+	first := errors.New("first")
+	calls := 0
+	dial := newSafeDialContext(fr, isBlockedIP, func(ctx context.Context, network, addr string) (net.Conn, error) {
+		calls++
+		if calls == 1 {
+			return nil, first
+		}
+		return nil, errors.New("second")
+	})
+
+	if _, err := dial(context.Background(), "tcp", "example.com:443"); !errors.Is(err, first) {
+		t.Fatalf("err = %v, want the first dial error", err)
 	}
 }
 

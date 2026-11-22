@@ -94,7 +94,7 @@ within `/v1` — a breaking change ships as `/v2/check`. `reason_code` is the
 stable field to match on; `reason` is free text for humans. Possible values:
 `ok`, `not_found`, `redirect_not_found`, `client_error`, `server_error`,
 `network_error`, `dns_error`, `timeout`, `invalid_format`, `blocked_target`,
-`too_large`, `tls_error`.
+`too_large`, `tls_error`, `too_many_redirects`.
 
 Server-level error responses (not from the checker itself):
 

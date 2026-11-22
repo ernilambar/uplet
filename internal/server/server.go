@@ -24,6 +24,7 @@ const (
 	defaultMaxBodyBytes  = 4 * 1024
 	defaultMaxConcurrent = 32
 	shutdownTimeout      = 5 * time.Second
+	readHeaderTimeout    = 5 * time.Second
 )
 
 // Server exposes checker.Check over a loopback-only HTTP API.
@@ -87,8 +88,9 @@ func requireLoopbackHost(next http.Handler) http.Handler {
 func (s *Server) Run(ctx context.Context) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.Port)
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: s.Handler(),
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

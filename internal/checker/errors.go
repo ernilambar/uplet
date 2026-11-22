@@ -42,10 +42,11 @@ func isTLSCertError(err error) bool {
 
 // isTransientErr reports whether err is a transient failure worth
 // retrying: dial timeout, connection reset, TLS-handshake timeout, and
-// similar transport hiccups. DNS errors, blocked targets, TLS certificate
-// failures, and connection-refused are definitive and are never retried.
+// similar transport hiccups. DNS errors, blocked targets, redirect loops,
+// TLS certificate failures, and connection-refused are definitive and are
+// never retried.
 func isTransientErr(err error) bool {
-	if err == nil || errors.Is(err, errBlockedTarget) {
+	if err == nil || errors.Is(err, errBlockedTarget) || errors.Is(err, errTooManyRedirects) {
 		return false
 	}
 	if isTLSCertError(err) {

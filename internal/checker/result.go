@@ -32,4 +32,5 @@ const (
 	ReasonBlockedTarget    ReasonCode = "blocked_target"
 	ReasonTooLarge         ReasonCode = "too_large"
 	ReasonTLSError         ReasonCode = "tls_error"
+	ReasonTooManyRedirects ReasonCode = "too_many_redirects"
 )
