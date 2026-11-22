@@ -36,3 +36,10 @@ Run these in order and confirm each exits 0 before declaring work done:
 1. `go vet ./...`
 2. `go test ./...`
 3. `go build -o build/uplet ./cmd/uplet`
+
+## Release
+
+- **The version lives only in `CHANGELOG.md`.** No source file holds it — the binary's version is injected from the git tag at build time (`-X .../internal/cli.version=<tag>` in `.github/workflows/release.yml`).
+- **To bump:** replace the `## X.X.X - YYYY-MM-DD` placeholder in `CHANGELOG.md` with `## <version> - <today's date>` (SemVer, no `v` prefix). If the tagging example in `CONTRIBUTING.md` should show the new version, update it too.
+- **Changelog must pass `npx @nilambar/flatlog validate`.** Bullets start with `Added:`, `Changed:`, or `Fixed:`, grouped in that order.
+- **Tags are `v`-prefixed** (e.g. `v1.0.1`). A `v*` tag triggers the release workflow, which builds the darwin-arm64 binary and publishes it with `SHA256SUMS`.
