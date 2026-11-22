@@ -357,6 +357,47 @@ func TestCheck_TooLarge(t *testing.T) {
 	}
 }
 
+func TestCheck_TooLargeWithSoftNotFoundPrefix(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<title>Page Not Found</title>" + strings.Repeat("a", 200)))
+	}))
+	defer ts.Close()
+
+	c := newAllowLoopbackChecker()
+	c.MaxBodyBytes = 64
+	res := c.Check(context.Background(), ts.URL+"/x")
+	if res.ReasonCode != string(ReasonNotFound) || res.PageExists {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+func TestCheck_SendsUserAgent(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var got []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Method+" "+r.UserAgent())
+		mu.Unlock()
+	}))
+	defer ts.Close()
+
+	newAllowLoopbackChecker().Check(context.Background(), ts.URL)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("got %d requests, want HEAD and GET: %v", len(got), got)
+	}
+	for _, g := range got {
+		if !strings.HasSuffix(g, " "+userAgent) {
+			t.Errorf("request %q did not carry User-Agent %q", g, userAgent)
+		}
+	}
+}
+
 func TestCheck_TLSError(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

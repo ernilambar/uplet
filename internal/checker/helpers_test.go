@@ -197,7 +197,14 @@ func TestRedirectIsSoftNotFound(t *testing.T) {
 		final    string
 		want     bool
 	}{
-		{"host change", "http://a.example/x", "http://b.example/x", true},
+		{"host change keeps path", "http://a.example/x", "http://b.example/x", false},
+		{"host change to other root", "http://a.example/x", "http://b.example/", true},
+		{"host change to other locale root", "http://a.example/x", "http://b.example/en/", true},
+		{"host change to other path", "http://sho.rt/abc", "http://b.example/article", false},
+		{"root to other host", "http://a.example/", "http://b.example/welcome", false},
+		{"locale root to other root", "http://a.example/en", "http://b.example/", false},
+		{"short word path to root", "http://a.example/about", "http://a.example/", true},
+		{"short word path to locale root", "http://a.example/blog", "http://a.example/en/", true},
 		{"www added", "http://www.a.example/x", "http://a.example/x", false},
 		{"www dropped", "http://a.example/x", "http://www.a.example/x", false},
 		{"trailing slash added", "http://a.example/foo", "http://a.example/foo/", false},
@@ -268,6 +275,9 @@ func TestStripLocalePrefix(t *testing.T) {
 		"/en/":            "/",
 		"/products":       "/products",
 		"/a/products":     "/a/products",
+		"/zh-Hant/x":      "/x",
+		"/about":          "/about",
+		"/blog/post":      "/blog/post",
 		"/123/products":   "/123/products",
 	}
 	for in, want := range cases {
@@ -284,11 +294,18 @@ func TestIsLocaleSegment(t *testing.T) {
 		"en":       true,
 		"EN":       true,
 		"en-US":    true,
-		"abcde":    true,
+		"abcde":    false,
+		"about":    false,
+		"faq":      false,
+		"zh-Hant":  true,
+		"pt_BR":    true,
+		"en-":      false,
+		"en-US-x":  false,
+		"eng":      false,
 		"e":        false,
 		"abcdef":   false,
 		"en1":      false,
-		"en_US":    false,
+		"en_US":    true,
 		"":         false,
 		"products": false,
 	}
@@ -339,7 +356,9 @@ func TestCheckSoft404_Misc(t *testing.T) {
 		{"empty body", http.MethodGet, "", 0, true, false},
 		{"case insensitive match", http.MethodGet, "PAGE NOT FOUND", 0, false, false},
 		{"head is trusted", http.MethodHead, "404 page not found", 0, true, false},
-		{"oversized body", http.MethodGet, strings.Repeat("a", 20), 10, false, true},
+		{"oversized body", http.MethodGet, strings.Repeat("a", 20), 10, true, true},
+		{"oversized body, marker in prefix", http.MethodGet, "page not found " + strings.Repeat("a", 20), 20, false, true},
+		{"oversized body, marker past cap", http.MethodGet, strings.Repeat("a", 20) + "page not found", 20, true, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

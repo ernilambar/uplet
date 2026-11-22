@@ -18,6 +18,11 @@ const (
 	retryBackoff          = 500 * time.Millisecond
 	tlsHandshakeTimeout   = 5 * time.Second
 	responseHeaderTimeout = 5 * time.Second
+
+	// userAgent identifies uplet to the target. Go's default
+	// "Go-http-client/1.1" is on many WAF blocklists, which turns healthy
+	// sites into 403 client_error false alarms.
+	userAgent = "Mozilla/5.0 (compatible; uplet; +https://github.com/ernilambar/uplet)"
 )
 
 // Checker performs SSRF-safe URL reachability and page-existence checks.
@@ -142,6 +147,7 @@ func doOnce(ctx context.Context, client *http.Client, method, rawURL string) (*h
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", userAgent)
 	return client.Do(req)
 }
 
@@ -235,14 +241,14 @@ func (c *Checker) fillFromResponse(res *Result, original *url.URL, resp *http.Re
 			return
 		}
 		switch {
-		case tooLarge:
-			res.PageExists = true
-			res.ReasonCode = string(ReasonTooLarge)
-			res.Reason = "response body exceeded inspection cap"
 		case !exists:
 			res.PageExists = false
 			res.ReasonCode = string(ReasonNotFound)
 			res.Reason = "page reports not found"
+		case tooLarge:
+			res.PageExists = true
+			res.ReasonCode = string(ReasonTooLarge)
+			res.Reason = "response body exceeded inspection cap; only its start was inspected"
 		default:
 			res.PageExists = true
 			res.ReasonCode = string(ReasonOK)

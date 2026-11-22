@@ -9,24 +9,23 @@ import (
 // like a "redirect to somewhere else because the page is gone" rather than
 // a transparent redirect (scheme upgrade, www add/drop, trailing-slash
 // normalization, locale-prefix, or a root request landing anywhere).
-// Conservative by design: it only flags a specific, non-root path
-// redirecting to a genuinely different, non-locale-equivalent path.
+// Conservative by design: on the same host it flags a specific, non-root
+// path redirecting to a genuinely different, non-locale-equivalent path.
+// Across hosts it flags only a non-root path collapsing to the other
+// site's root: domain moves and URL shorteners legitimately change host
+// and path, so anything else is given the benefit of the doubt.
 func redirectIsSoftNotFound(original, final *url.URL) bool {
-	origHost := normalizeHost(original.Hostname())
-	finalHost := normalizeHost(final.Hostname())
-	if origHost != finalHost {
-		return true
-	}
-
 	origPath := normalizePath(original.EscapedPath())
-	finalPath := normalizePath(final.EscapedPath())
-	if origPath == finalPath {
-		return false
-	}
 	if origPath == "/" {
 		return false
 	}
-	return stripLocalePrefix(origPath) != stripLocalePrefix(finalPath)
+	origCore := stripLocalePrefix(origPath)
+	finalCore := stripLocalePrefix(normalizePath(final.EscapedPath()))
+
+	if normalizeHost(original.Hostname()) != normalizeHost(final.Hostname()) {
+		return origCore != "/" && finalCore == "/"
+	}
+	return origCore != finalCore
 }
 
 func normalizeHost(h string) string {
@@ -46,9 +45,9 @@ func normalizePath(p string) string {
 	return p
 }
 
-// stripLocalePrefix removes a leading short alphabetic (optionally
-// hyphenated) path segment such as "/en" or "/en-us", treating it as a
-// locale marker rather than meaningful path content.
+// stripLocalePrefix removes a leading locale path segment such as "/en",
+// "/en-us" or "/zh-Hant", treating it as a locale marker rather than
+// meaningful path content.
 func stripLocalePrefix(path string) string {
 	trimmed := strings.TrimPrefix(path, "/")
 	seg, rest, hasRest := strings.Cut(trimmed, "/")
@@ -61,14 +60,27 @@ func stripLocalePrefix(path string) string {
 	return "/"
 }
 
+// isLocaleSegment reports whether seg looks like a locale tag: a two-letter
+// language code, optionally followed by "-" or "_" and a 2–4 letter region
+// or script subtag ("en", "en-US", "pt_BR", "zh-Hant"). Plain short words
+// like "about" or "blog" must not match, or redirects such as /about → /
+// would be mistaken for locale normalization.
 func isLocaleSegment(seg string) bool {
-	if len(seg) < 2 || len(seg) > 5 {
+	lang, sub, hasSub := strings.Cut(seg, "-")
+	if !hasSub {
+		lang, sub, hasSub = strings.Cut(seg, "_")
+	}
+	if len(lang) != 2 || !isASCIILetters(lang) {
 		return false
 	}
-	for _, r := range seg {
-		if r == '-' {
-			continue
-		}
+	if !hasSub {
+		return true
+	}
+	return len(sub) >= 2 && len(sub) <= 4 && isASCIILetters(sub)
+}
+
+func isASCIILetters(s string) bool {
+	for _, r := range s {
 		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
 			return false
 		}

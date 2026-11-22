@@ -7,6 +7,10 @@
 - Block more SSRF targets: `::`, CGNAT, reserved, multicast, Teredo, and private IPv4 embedded in NAT64/6to4.
 - Fix `serve` leaking connections after each check.
 - Reject `serve` requests whose `Host` isn't `127.0.0.1` to defend against DNS rebinding.
+- Fix short paths like `/about` being treated as locale prefixes, hiding redirects to the homepage.
+- Stop flagging redirects to another host unless they land on that site's root.
+- Inspect the start of bodies over the 64KB cap instead of skipping soft-404 detection.
+- Send an identifying `User-Agent` instead of Go's default.
 
 ## 1.0.0 - 2026-08-03
 - Initial release

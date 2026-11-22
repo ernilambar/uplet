@@ -25,11 +25,13 @@ var softNotFoundPatterns = []string{
 	"sorry, this page",
 }
 
-// checkSoft404 reads a capped slice of the response body and reports
-// whether it looks like a soft 404. tooLarge reports the body exceeded
-// MaxBodyBytes; exists is meaningless when tooLarge is true. err reports a
-// failed body read, in which case the other results are meaningless. HEAD
-// responses have no body to inspect and are treated as existing.
+// checkSoft404 reads up to MaxBodyBytes of the response body and reports
+// whether it looks like a soft 404. A body larger than the cap is not
+// skipped: its first MaxBodyBytes are inspected (not-found markers almost
+// always appear early, in <title> or the main heading) and tooLarge
+// reports that the rest went unread. err reports a failed body read, in
+// which case the other results are meaningless. HEAD responses have no
+// body to inspect and are treated as existing.
 func (c *Checker) checkSoft404(resp *http.Response) (exists bool, tooLarge bool, err error) {
 	if resp.Request.Method == http.MethodHead {
 		return true, false, nil
@@ -42,14 +44,15 @@ func (c *Checker) checkSoft404(resp *http.Response) (exists bool, tooLarge bool,
 		return false, false, err
 	}
 	if int64(n) > limit {
-		return false, true, nil
+		tooLarge = true
+		n = int(limit)
 	}
 
 	body := strings.ToLower(string(buf[:n]))
 	for _, pat := range softNotFoundPatterns {
 		if strings.Contains(body, pat) {
-			return false, false, nil
+			return false, tooLarge, nil
 		}
 	}
-	return true, false, nil
+	return true, tooLarge, nil
 }
