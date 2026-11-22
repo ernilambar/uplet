@@ -1,4 +1,4 @@
-# uplet
+# Uplet
 
 CLI tool to check that a URL is up and the page really exists.
 
