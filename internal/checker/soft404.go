@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -26,25 +27,29 @@ var softNotFoundPatterns = []string{
 
 // checkSoft404 reads a capped slice of the response body and reports
 // whether it looks like a soft 404. tooLarge reports the body exceeded
-// MaxBodyBytes; exists is meaningless when tooLarge is true. HEAD
+// MaxBodyBytes; exists is meaningless when tooLarge is true. err reports a
+// failed body read, in which case the other results are meaningless. HEAD
 // responses have no body to inspect and are treated as existing.
-func (c *Checker) checkSoft404(resp *http.Response) (exists bool, tooLarge bool) {
+func (c *Checker) checkSoft404(resp *http.Response) (exists bool, tooLarge bool, err error) {
 	if resp.Request.Method == http.MethodHead {
-		return true, false
+		return true, false, nil
 	}
 
 	limit := c.MaxBodyBytes
 	buf := make([]byte, limit+1)
-	n, _ := io.ReadFull(resp.Body, buf)
+	n, err := io.ReadFull(resp.Body, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return false, false, err
+	}
 	if int64(n) > limit {
-		return false, true
+		return false, true, nil
 	}
 
 	body := strings.ToLower(string(buf[:n]))
 	for _, pat := range softNotFoundPatterns {
 		if strings.Contains(body, pat) {
-			return false, false
+			return false, false, nil
 		}
 	}
-	return true, false
+	return true, false, nil
 }

@@ -149,6 +149,63 @@ func TestCheck_ContentBasedSoftNotFound(t *testing.T) {
 	}
 }
 
+// Regression: a body that arrives after the headers must still be read,
+// i.e. the request context must not be canceled before the body read.
+func TestCheck_ContentBasedSoftNotFoundStreamedBody(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(strings.Repeat("a", 1024)))
+		w.(http.Flusher).Flush()
+		// Delay the tail so it arrives only after Do has returned.
+		time.Sleep(50 * time.Millisecond)
+		w.Write([]byte(" page not found"))
+	}))
+	defer ts.Close()
+
+	res := newAllowLoopbackChecker().Check(context.Background(), ts.URL+"/anything")
+	if res.ReasonCode != string(ReasonNotFound) || res.PageExists {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+func TestCheck_ClosesConnections(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	open := 0
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	ts.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch s {
+		case http.StateNew:
+			open++
+		case http.StateClosed, http.StateHijacked:
+			open--
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+
+	newAllowLoopbackChecker().Check(context.Background(), ts.URL)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		n := open
+		mu.Unlock()
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d connection(s) left open after Check", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestCheck_FlakyThenSuccess(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -333,6 +390,19 @@ func TestIsBlockedIP(t *testing.T) {
 		{"unspecified", "0.0.0.0", true},
 		{"broadcast", "255.255.255.255", true},
 		{"ipv4-mapped loopback", "::ffff:127.0.0.1", true},
+		{"ipv6 unspecified", "::", true},
+		{"ipv4-compatible loopback", "::127.0.0.1", true},
+		{"cgnat / alibaba metadata", "100.100.100.200", true},
+		{"benchmarking", "198.18.0.1", true},
+		{"reserved class e", "240.0.0.1", true},
+		{"ipv4 multicast", "224.0.0.1", true},
+		{"ipv6 multicast", "ff02::1", true},
+		{"nat64 embedded loopback", "64:ff9b::7f00:1", true},
+		{"nat64 embedded public", "64:ff9b::808:808", false},
+		{"6to4 embedded loopback", "2002:7f00:1::", true},
+		{"6to4 embedded public", "2002:808:808::", false},
+		{"teredo", "2001:0:4136:e378::1", true},
+		{"public ipv6", "2606:4700:4700::1111", false},
 		{"public dns", "8.8.8.8", false},
 		{"public web", "93.184.216.34", false},
 	}
@@ -346,9 +416,9 @@ func TestIsBlockedIP(t *testing.T) {
 		})
 	}
 
-	// A nil IP must not panic and must not be treated as blocked.
-	if isBlockedIP(nil) {
-		t.Error("isBlockedIP(nil) = true, want false")
+	// An invalid IP must not panic and must fail closed.
+	if !isBlockedIP(nil) {
+		t.Error("isBlockedIP(nil) = false, want true")
 	}
 }
 
@@ -376,7 +446,7 @@ func TestCheck_RedirectToPrivateIPBlocked(t *testing.T) {
 func TestSafeDialContext_MixedResolutionRejected(t *testing.T) {
 	t.Parallel()
 	fr := &fakeResolver{ips: [][]net.IPAddr{
-		{{IP: net.ParseIP("203.0.113.10")}, {IP: net.ParseIP("10.0.0.5")}},
+		{{IP: net.ParseIP("93.184.216.34")}, {IP: net.ParseIP("10.0.0.5")}},
 	}}
 	dial := newSafeDialContext(fr, isBlockedIP, func(ctx context.Context, network, addr string) (net.Conn, error) {
 		t.Fatalf("dial should not be reached when any resolved IP is blocked")
@@ -391,7 +461,7 @@ func TestSafeDialContext_MixedResolutionRejected(t *testing.T) {
 
 func TestSafeDialContext_ResolvesOnceAndDialsValidatedIP(t *testing.T) {
 	t.Parallel()
-	fr := &fakeResolver{ips: [][]net.IPAddr{{{IP: net.ParseIP("203.0.113.10")}}}}
+	fr := &fakeResolver{ips: [][]net.IPAddr{{{IP: net.ParseIP("93.184.216.34")}}}}
 	var gotAddr string
 	fakeDial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		gotAddr = addr
@@ -406,7 +476,7 @@ func TestSafeDialContext_ResolvesOnceAndDialsValidatedIP(t *testing.T) {
 	if fr.calls != 1 {
 		t.Fatalf("resolver called %d times, want exactly 1 (no re-resolution)", fr.calls)
 	}
-	if gotAddr != "203.0.113.10:443" {
+	if gotAddr != "93.184.216.34:443" {
 		t.Fatalf("dialed %q, want the validated resolved IP", gotAddr)
 	}
 }

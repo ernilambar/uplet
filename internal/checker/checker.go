@@ -62,9 +62,12 @@ func (c *Checker) Check(ctx context.Context, rawURL string) Result {
 	res.ValidFormat = true
 
 	client := c.newClient()
+	// Each Check builds its own Transport; release its pooled connections
+	// when done or they stay open indefinitely.
+	defer client.CloseIdleConnections()
 	start := time.Now()
 
-	resp, attempts, err := c.doWithRetry(ctx, client, http.MethodHead, parsed.String())
+	resp, cancel, attempts, err := c.doWithRetry(ctx, client, http.MethodHead, parsed.String())
 	res.Attempts = attempts
 
 	// HEAD carries no body, so a 2xx tells us nothing about soft-404
@@ -73,8 +76,9 @@ func (c *Checker) Check(ctx context.Context, rawURL string) Result {
 	// itself. Any other status is already definitive from HEAD alone.
 	if err == nil && (resp.StatusCode == http.StatusMethodNotAllowed || (resp.StatusCode >= 200 && resp.StatusCode < 300)) {
 		resp.Body.Close()
+		cancel()
 		var attempts2 int
-		resp, attempts2, err = c.doWithRetry(ctx, client, http.MethodGet, parsed.String())
+		resp, cancel, attempts2, err = c.doWithRetry(ctx, client, http.MethodGet, parsed.String())
 		res.Attempts += attempts2
 	}
 
@@ -84,6 +88,7 @@ func (c *Checker) Check(ctx context.Context, rawURL string) Result {
 		c.fillError(&res, err)
 		return res
 	}
+	defer cancel()
 	defer resp.Body.Close()
 
 	c.fillFromResponse(&res, parsed, resp)
@@ -104,29 +109,32 @@ func validateFormat(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-func (c *Checker) doWithRetry(ctx context.Context, client *http.Client, method, rawURL string) (*http.Response, int, error) {
-	var resp *http.Response
-	var err error
+// doWithRetry performs the request, retrying transient failures. On success
+// the returned cancel func owns the request's context and must be called
+// only after resp.Body has been read and closed: canceling earlier aborts
+// the in-flight body read.
+func (c *Checker) doWithRetry(ctx context.Context, client *http.Client, method, rawURL string) (*http.Response, context.CancelFunc, int, error) {
 	attempts := 0
 
-	for attempts < maxAttempts {
+	for {
 		attempts++
 		reqCtx, cancel := context.WithTimeout(ctx, c.Timeout)
-		resp, err = doOnce(reqCtx, client, method, rawURL)
+		resp, err := doOnce(reqCtx, client, method, rawURL)
+		if err == nil {
+			return resp, cancel, attempts, nil
+		}
 		cancel()
 
-		if err == nil || !isTransientErr(err) || attempts >= maxAttempts {
-			break
+		if !isTransientErr(err) || attempts >= maxAttempts {
+			return nil, nil, attempts, err
 		}
 
 		select {
 		case <-time.After(retryBackoff):
 		case <-ctx.Done():
-			return nil, attempts, ctx.Err()
+			return nil, nil, attempts, ctx.Err()
 		}
 	}
-
-	return resp, attempts, err
 }
 
 func doOnce(ctx context.Context, client *http.Client, method, rawURL string) (*http.Response, error) {
@@ -221,7 +229,11 @@ func (c *Checker) fillFromResponse(res *Result, original *url.URL, resp *http.Re
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		exists, tooLarge := c.checkSoft404(resp)
+		exists, tooLarge, err := c.checkSoft404(resp)
+		if err != nil {
+			c.fillError(res, err)
+			return
+		}
 		switch {
 		case tooLarge:
 			res.PageExists = true

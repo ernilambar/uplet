@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"testing/iotest"
 )
 
 func TestValidateFormat(t *testing.T) {
@@ -63,23 +64,6 @@ func TestValidateFormat(t *testing.T) {
 				t.Fatalf("validateFormat(%q) = %v, want error", c.raw, u)
 			}
 		})
-	}
-}
-
-func TestNormalizeIP(t *testing.T) {
-	t.Parallel()
-
-	mapped := normalizeIP(net.ParseIP("::ffff:127.0.0.1"))
-	if !mapped.Equal(net.IPv4(127, 0, 0, 1)) {
-		t.Fatalf("normalizeIP(::ffff:127.0.0.1) = %v, want 127.0.0.1", mapped)
-	}
-	if len(mapped) != net.IPv4len {
-		t.Fatalf("normalizeIP returned %d-byte address, want 4", len(mapped))
-	}
-
-	v6 := normalizeIP(net.ParseIP("::1"))
-	if len(v6) != net.IPv6len {
-		t.Fatalf("normalizeIP(::1) returned %d-byte address, want 16", len(v6))
 	}
 }
 
@@ -326,7 +310,10 @@ func TestCheckSoft404_AllPatterns(t *testing.T) {
 				Request: &http.Request{Method: http.MethodGet},
 				Body:    io.NopCloser(strings.NewReader("<html>Oops, " + pat + " here</html>")),
 			}
-			exists, tooLarge := c.checkSoft404(resp)
+			exists, tooLarge, err := c.checkSoft404(resp)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
 			if tooLarge {
 				t.Fatalf("tooLarge = true for pattern %q", pat)
 			}
@@ -365,7 +352,10 @@ func TestCheckSoft404_Misc(t *testing.T) {
 				Request: &http.Request{Method: c.method},
 				Body:    io.NopCloser(strings.NewReader(c.body)),
 			}
-			exists, tooLarge := chk.checkSoft404(resp)
+			exists, tooLarge, err := chk.checkSoft404(resp)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
 			if tooLarge != c.wantLarge {
 				t.Errorf("tooLarge = %v, want %v", tooLarge, c.wantLarge)
 			}
@@ -373,6 +363,18 @@ func TestCheckSoft404_Misc(t *testing.T) {
 				t.Errorf("exists = %v, want %v", exists, c.wantExists)
 			}
 		})
+	}
+}
+
+func TestCheckSoft404_ReadError(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("boom")
+	resp := &http.Response{
+		Request: &http.Request{Method: http.MethodGet},
+		Body:    io.NopCloser(iotest.ErrReader(boom)),
+	}
+	if _, _, err := newAllowLoopbackChecker().checkSoft404(resp); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want %v", err, boom)
 	}
 }
 
@@ -402,11 +404,11 @@ func TestSafeDialContext_LiteralIPAllowedSkipsResolver(t *testing.T) {
 		return nil, errors.New("stop")
 	})
 
-	_, err := dial(context.Background(), "tcp", "203.0.113.10:443")
+	_, err := dial(context.Background(), "tcp", "93.184.216.34:443")
 	if err == nil || err.Error() != "stop" {
 		t.Fatalf("err = %v, want sentinel from dial", err)
 	}
-	if gotAddr != "203.0.113.10:443" {
+	if gotAddr != "93.184.216.34:443" {
 		t.Fatalf("dialed %q, want the literal address", gotAddr)
 	}
 	if fr.calls != 0 {

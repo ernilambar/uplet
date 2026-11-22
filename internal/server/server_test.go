@@ -23,6 +23,14 @@ func newTestServer() *Server {
 	return s
 }
 
+// newLocalRequest is httptest.NewRequest with the Host header a real
+// loopback client sends (httptest defaults to example.com).
+func newLocalRequest(method, target string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	req.Host = fmt.Sprintf("127.0.0.1:%d", DefaultPort)
+	return req
+}
+
 func assertErrorBody(t *testing.T, rec *httptest.ResponseRecorder, wantCode string) {
 	t.Helper()
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
@@ -49,7 +57,7 @@ func TestHandleCheck_WrongMethod(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
 			s := newTestServer()
-			req := httptest.NewRequest(method, "/v1/check", nil)
+			req := newLocalRequest(method, "/v1/check", nil)
 			rec := httptest.NewRecorder()
 
 			s.Handler().ServeHTTP(rec, req)
@@ -68,7 +76,7 @@ func TestHandleCheck_WrongMethod(t *testing.T) {
 func TestHandleCheck_MissingContentType(t *testing.T) {
 	t.Parallel()
 	s := newTestServer()
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1"}`))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1"}`))
 	rec := httptest.NewRecorder()
 
 	s.Handler().ServeHTTP(rec, req)
@@ -82,7 +90,7 @@ func TestHandleCheck_MissingContentType(t *testing.T) {
 func TestHandleCheck_WrongContentType(t *testing.T) {
 	t.Parallel()
 	s := newTestServer()
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1"}`))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1"}`))
 	req.Header.Set("Content-Type", "text/plain")
 	rec := httptest.NewRecorder()
 
@@ -97,7 +105,7 @@ func TestHandleCheck_WrongContentType(t *testing.T) {
 func TestHandleCheck_ContentTypeWithCharsetIsAccepted(t *testing.T) {
 	t.Parallel()
 	s := newTestServer()
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	rec := httptest.NewRecorder()
 
@@ -111,7 +119,7 @@ func TestHandleCheck_ContentTypeWithCharsetIsAccepted(t *testing.T) {
 func TestHandleCheck_MalformedJSON(t *testing.T) {
 	t.Parallel()
 	s := newTestServer()
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`not json`))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`not json`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -126,7 +134,7 @@ func TestHandleCheck_MalformedJSON(t *testing.T) {
 func TestHandleCheck_MissingURLField(t *testing.T) {
 	t.Parallel()
 	s := newTestServer()
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`{}`))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -138,10 +146,32 @@ func TestHandleCheck_MissingURLField(t *testing.T) {
 	assertErrorBody(t, rec, "missing_url")
 }
 
+// DNS rebinding: the browser sends the attacker's hostname in Host even
+// after it resolves to 127.0.0.1.
+func TestHandler_RejectsNonLoopbackHost(t *testing.T) {
+	t.Parallel()
+	for _, host := range []string{"attacker.example:54321", "attacker.example", "localhost:54321", "127.0.0.1.attacker.example"} {
+		t.Run(host, func(t *testing.T) {
+			t.Parallel()
+			req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
+			req.Host = host
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			newTestServer().Handler().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+			}
+			assertErrorBody(t, rec, "forbidden_host")
+		})
+	}
+}
+
 func TestHandleCheck_UnknownRoute(t *testing.T) {
 	t.Parallel()
 	s := newTestServer()
-	req := httptest.NewRequest(http.MethodPost, "/v1/nope", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
+	req := newLocalRequest(http.MethodPost, "/v1/nope", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -159,7 +189,7 @@ func TestHandleCheck_UnknownRoute(t *testing.T) {
 func TestHandleCheck_ValidRequestReturnsCheckerResult(t *testing.T) {
 	t.Parallel()
 	s := newTestServer()
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -193,7 +223,7 @@ func TestHandleCheck_ConcurrencyCapReturns429(t *testing.T) {
 	s.sem <- struct{}{} // occupy the only slot
 	defer func() { <-s.sem }()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -215,7 +245,7 @@ func TestHandleCheck_SemaphoreReleasedAfterSuccess(t *testing.T) {
 	h := s.Handler()
 
 	do := func() int {
-		req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
+		req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(`{"url":"http://127.0.0.1:1/"}`))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -236,7 +266,7 @@ func TestHandleCheck_OversizedBody(t *testing.T) {
 	s.MaxBodyBytes = 16
 
 	body := `{"url":"http://` + strings.Repeat("a", 100) + `.example/"}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(body))
+	req := newLocalRequest(http.MethodPost, "/v1/check", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -258,7 +288,7 @@ func TestLogMiddlewareRecordsStatus(t *testing.T) {
 	s.Logger = log.New(&buf, "", 0)
 	h := s.Handler()
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/check", nil)
+	req := newLocalRequest(http.MethodGet, "/v1/check", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

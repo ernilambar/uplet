@@ -103,6 +103,7 @@ Server-level error responses (not from the checker itself):
 | 400    | `{"error":"missing_url"}`            | malformed JSON or missing `url`  |
 | 405    | `{"error":"method_not_allowed"}`     | non-POST request                 |
 | 415    | `{"error":"unsupported_media_type"}` | missing/wrong `Content-Type`     |
+| 403    | `{"error":"forbidden_host"}`         | `Host` header isn't `127.0.0.1`  |
 | 429    | `{"error":"too_many_requests"}`      | concurrency cap exceeded         |
 
 ## Development

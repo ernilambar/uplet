@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -58,7 +59,26 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/check", s.handleCheck)
 
-	return s.logMiddleware(mux)
+	return s.logMiddleware(requireLoopbackHost(mux))
+}
+
+// requireLoopbackHost rejects requests whose Host header isn't 127.0.0.1.
+// Binding to loopback alone doesn't stop DNS rebinding: a page on
+// attacker.example can re-resolve its own name to 127.0.0.1, become
+// same-origin with this server, and read responses. The browser still
+// sends the attacker's hostname in Host, so checking it closes the hole.
+func requireLoopbackHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if host != "127.0.0.1" {
+			writeError(w, http.StatusForbidden, "forbidden_host")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Run binds to 127.0.0.1:Port — never 0.0.0.0, never the hostname
