@@ -2,11 +2,11 @@
 
 ## Overview
 
-uplet is a Go CLI tool that checks whether a URL is up and the page truly exists — it catches soft-404s and fake success responses that naive checks miss. Single binary, stdlib-only (Go 1.26.1), no external dependencies.
+uplet is a Go CLI tool that checks whether a URL is up and the page truly exists — it catches soft-404s and fake success responses that naive checks miss. Single binary, stdlib-only (Go 1.27.3), no external dependencies.
 
 ## Setup
 
-- Install Go 1.26.1 (matches CI and go.mod).
+- Install Go 1.27.3 (matches CI and go.mod).
 - No `go mod download` needed — the module uses only the standard library.
 - Clone and build: `go build -o build/uplet ./cmd/uplet`.
 

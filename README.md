@@ -13,7 +13,7 @@ CLI tool to check that a URL is up and the page really exists.
 
 ## Requirements
 
-- macOS (arm64 or amd64).
+- macOS 15 or later (Apple Silicon).
 
 ## Install
 
@@ -27,8 +27,6 @@ uplet --version
 ```
 
 ### From a release
-
-Apple Silicon (arm64) example — swap `arm64` for `amd64` on Intel Macs:
 
 ```sh
 curl -fL -o uplet https://github.com/ernilambar/uplet/releases/latest/download/uplet-darwin-arm64
